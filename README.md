@@ -16,6 +16,9 @@ Requires **Java 21**. Maven is not needed; the wrapper downloads it.
 The service starts on `http://localhost:8080`. Data is stored in `./data/notes.mv.db`, so it survives restarts.
 Delete the `data/` folder to start from an empty database.
 
+Tests live in `src/test/.../NoteApiIntegrationTest.java`. They drive the real HTTP layer and database
+(in-memory H2), and cover access rules, search, tags, pagination, validation and the error format.
+
 - **API docs (Swagger UI):** http://localhost:8080/swagger-ui.html
 - **Database console (optional):** start with
   `./mvnw spring-boot:run -Dspring-boot.run.arguments=--spring.h2.console.enabled=true`,
@@ -89,46 +92,6 @@ curl -s 'localhost:8080/notes?tag=work&q=ship' -H 'X-User-Id: 2'   # Bob sees on
 
 (Ids assume an empty database.)
 
-### Errors
-
-Every error has the same shape:
-
-```json
-{"status": 400, "error": "Validation failed", "details": ["title must not be blank"]}
-```
-
-| Status | When |
-| --- | --- |
-| 400 | Validation failed (`details` lists each field), malformed JSON, or a bad parameter type |
-| 401 | `X-User-Id` missing or unknown |
-| 403 | A team member tries to delete a note they don't own |
-| 404 | The note or team doesn't exist, or you aren't allowed to see it |
-| 405 / 415 | Wrong HTTP method / content type |
-| 500 | Unexpected error (logged; no internals returned) |
-
-## Data model
-
-| Table | Holds |
-| --- | --- |
-| `users` | id, name |
-| `teams` | id, name |
-| `team_members` | which users belong to which teams |
-| `notes` | id, title, content, owner, optional team, created/updated timestamps |
-| `note_tags` | one row per tag on a note |
-
-The schema is generated from the JPA entities in `model/`.
-
-## Code layout
-```
-api/         controllers, request/response records, error handling
-service/     business rules and authorization (NoteService, DirectoryService)
-repository/  Spring Data JPA repositories, including the note listing query
-model/       JPA entities
-```
-
-Tests live in `src/test/.../NoteApiIntegrationTest.java`. They drive the real HTTP layer and database
-(in-memory H2), and cover access rules, search, tags, pagination, validation and the error format.
-
 ## Design choices
 
 1. **Who can see a note.** A note is either private or shared with one team, and everyone in that team
@@ -165,3 +128,32 @@ page totals and get slower as notes grow. The cost is one small extra lookup for
 **Stop doing**
 - Reusing one request type for create and update: `PUT` silently ignores `teamId`. Separate types would make that explicit.
 - Keeping all tests in one class; split them by area and add focused repository tests for the listing query.
+
+## Errors
+
+Every error has the same shape:
+
+```json
+{"status": 400, "error": "Validation failed", "details": ["title must not be blank"]}
+```
+
+| Status | When |
+| --- | --- |
+| 400 | Validation failed (`details` lists each field), malformed JSON, or a bad parameter type |
+| 401 | `X-User-Id` missing or unknown |
+| 403 | A team member tries to delete a note they don't own |
+| 404 | The note or team doesn't exist, or you aren't allowed to see it |
+| 405 / 415 | Wrong HTTP method / content type |
+| 500 | Unexpected error (logged; no internals returned) |
+
+## Data model
+
+| Table | Holds |
+| --- | --- |
+| `users` | id, name |
+| `teams` | id, name |
+| `team_members` | which users belong to which teams |
+| `notes` | id, title, content, owner, optional team, created/updated timestamps |
+| `note_tags` | one row per tag on a note |
+
+The schema is generated from the JPA entities in `model/`.
