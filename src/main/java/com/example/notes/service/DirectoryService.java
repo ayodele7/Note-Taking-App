@@ -34,13 +34,13 @@ public class DirectoryService {
         return teams.save(team);
     }
 
-    /** Only existing members can add new members. */
+    /** Only existing members can add new members; to anyone else the team looks like it doesn't exist (404). */
     public Team addMember(Long callerId, Long teamId, Long newMemberId) {
-        users.findById(callerId).orElseThrow(() -> new UnauthorizedException("Unknown user"));
-        Team team = teams.findById(teamId).orElseThrow(() -> new NotFoundException("Team not found"));
+        requireUser(callerId);
         if (!teams.existsByIdAndMembersId(teamId, callerId)) {
-            throw new ForbiddenException("Only team members can add members");
+            throw new NotFoundException("Team not found");
         }
+        Team team = teams.findById(teamId).orElseThrow(() -> new NotFoundException("Team not found"));
         User newMember = users.findById(newMemberId).orElseThrow(() -> new NotFoundException("User not found"));
         team.getMembers().add(newMember);
         return teams.save(team);

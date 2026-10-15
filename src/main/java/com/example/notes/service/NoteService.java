@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
  *   <li>A note is visible to its owner and, if it has a team, to every member of that team.</li>
  *   <li>Invisible notes look like they don't exist (404), so ids can't be probed.</li>
  *   <li>Owner or any team member may edit; only the owner may delete (403 for other viewers).</li>
- *   <li>You can only share a note with a team you belong to.</li>
+ *   <li>You can only share a note with a team you belong to; other teams look like they don't exist (404).</li>
  * </ul>
  */
 @Service
@@ -48,11 +48,12 @@ public class NoteService {
         User caller = requireUser(callerId);
         Team team = null;
         if (req.teamId() != null) {
+            // Membership first: a team you're not in gets the same 404 as one that doesn't exist.
+            if (!teams.existsByIdAndMembersId(req.teamId(), callerId)) {
+                throw new NotFoundException("Team not found");
+            }
             team = teams.findById(req.teamId())
                     .orElseThrow(() -> new NotFoundException("Team not found"));
-            if (!teams.existsByIdAndMembersId(team.getId(), callerId)) {
-                throw new ForbiddenException("You are not a member of this team");
-            }
         }
         Note note = new Note(req.title().trim(), req.content(), caller, team, normalizeTags(req.tags()));
         return NoteResponse.from(notes.save(note));
@@ -68,11 +69,13 @@ public class NoteService {
     public PageResult<NoteResponse> list(Long callerId, String q, String tag, int page, int size) {
         requireUser(callerId);
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
-        PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize, Sort.by(Sort.Direction.DESC, "updatedAt"));
+        // id breaks ties so notes with equal timestamps can't shift between pages.
+        Sort newestFirst = Sort.by(Sort.Direction.DESC, "updatedAt").and(Sort.by(Sort.Direction.DESC, "id"));
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), safeSize, newestFirst);
         Page<Note> result = notes.findVisible(
                 callerId,
                 teams.findIdsByMemberId(callerId),
-                q == null ? "" : q.trim(),
+                q == null ? "" : escapeLike(q.trim()),
                 tag == null ? "" : tag.trim().toLowerCase(),
                 pageable);
         return new PageResult<>(
@@ -114,6 +117,11 @@ public class NoteService {
             throw new NotFoundException("Note not found");
         }
         return note;
+    }
+
+    /** Makes % and _ match literally in LIKE; '!' is the escape character declared in findVisible. */
+    private static String escapeLike(String s) {
+        return s.replace("!", "!!").replace("%", "!%").replace("_", "!_");
     }
 
     private static Set<String> normalizeTags(Set<String> tags) {

@@ -10,10 +10,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
+import java.sql.Timestamp;
+import java.time.Instant;
+
 import static org.hamcrest.Matchers.hasSize;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -35,6 +40,8 @@ class NoteApiIntegrationTest {
     TeamRepository teamRepository;
     @Autowired
     UserRepository userRepository;
+    @Autowired
+    JdbcTemplate jdbc;
 
     long alice;
     long bob;
@@ -60,7 +67,8 @@ class NoteApiIntegrationTest {
     @Test
     void nonMemberCannotAddTeamMembers() throws Exception {
         mvc.perform(put("/teams/{t}/members/{u}", team, carol).header("X-User-Id", carol))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("Team not found"));
         mvc.perform(get("/teams/{t}", team).header("X-User-Id", alice))
                 .andExpect(jsonPath("$.memberIds", hasSize(2)));
     }
@@ -181,7 +189,38 @@ class NoteApiIntegrationTest {
 
     @Test
     void cannotShareWithTeamYouDoNotBelongTo() throws Exception {
-        create(carol, "Nope", "x", team, "[]").andExpect(status().isForbidden());
+        String foreignTeam = create(carol, "Nope", "x", team, "[]")
+                .andExpect(status().isNotFound())
+                .andReturn().getResponse().getContentAsString();
+        String missingTeam = create(carol, "Nope", "x", 99999L, "[]")
+                .andReturn().getResponse().getContentAsString();
+        assertEquals(missingTeam, foreignTeam, "a foreign team must be indistinguishable from a missing one");
+    }
+
+    @Test
+    void searchTreatsWildcardsAsPlainText() throws Exception {
+        createNote(alice, "100% done", "x", null, "[]");
+        createNote(alice, "snake_case", "x", null, "[]");
+        createNote(alice, "plain", "x", null, "[]");
+
+        mvc.perform(get("/notes").header("X-User-Id", alice).param("q", "%"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].title").value("100% done"));
+        mvc.perform(get("/notes").header("X-User-Id", alice).param("q", "_"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].title").value("snake_case"));
+    }
+
+    @Test
+    void notesWithEqualTimestampsKeepAStablePageOrder() throws Exception {
+        long older = createNote(alice, "A", "x", null, "[]");
+        long newer = createNote(alice, "B", "x", null, "[]");
+        jdbc.update("update notes set updated_at = ?", Timestamp.from(Instant.parse("2026-01-01T00:00:00Z")));
+
+        mvc.perform(get("/notes").header("X-User-Id", alice).param("size", "1").param("page", "0"))
+                .andExpect(jsonPath("$.items[0].id").value(newer));
+        mvc.perform(get("/notes").header("X-User-Id", alice).param("size", "1").param("page", "1"))
+                .andExpect(jsonPath("$.items[0].id").value(older));
     }
 
     @Test

@@ -15,12 +15,13 @@ public interface NoteRepository extends JpaRepository<Note, Long> {
      * Notes the user may see: their own, plus any shared with one of {@code teamIds}
      * (the caller's teams, looked up first via {@link TeamRepository#findIdsByMemberId}).
      * Empty-string q / tag mean "no filter" (avoids typed-null parameter issues).
+     * q must arrive with LIKE wildcards already escaped using '!' (see NoteService).
      */
     @Query("""
             select n from Note n
             where (n.owner.id = :userId or n.team.id in :teamIds)
-              and (:q = '' or lower(n.title) like lower(concat('%', :q, '%'))
-                           or lower(n.content) like lower(concat('%', :q, '%')))
+              and (:q = '' or lower(n.title) like lower(concat('%', :q, '%')) escape '!'
+                           or lower(n.content) like lower(concat('%', :q, '%')) escape '!')
               and (:tag = '' or :tag member of n.tags)
             """)
     Page<Note> findVisible(@Param("userId") Long userId,
